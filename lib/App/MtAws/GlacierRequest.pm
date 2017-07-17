@@ -585,6 +585,10 @@ sub perform_lwp
 						}
 					}
 				}
+				print "PID $$ Bullshit error. Will retry ($dt seconds spent for request)\n";
+				$self->{last_retry_reason} = 'Bullshit error '.$resp->code;
+				throttle($i);
+				next;
 			}
 			print STDERR "Error:\n";
 			print STDERR dump_request_response($req, $resp);
