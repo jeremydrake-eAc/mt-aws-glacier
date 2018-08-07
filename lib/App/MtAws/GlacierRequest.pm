@@ -37,6 +37,7 @@ use App::MtAws::Exceptions;
 use App::MtAws::HttpSegmentWriter;
 use App::MtAws::SHAHash qw/large_sha256_hex/;
 use Carp;
+use JSON::XS;
 
 sub new
 {
@@ -46,6 +47,7 @@ sub new
 
 	defined($self->{$_} = $options->{$_})||confess $_ for (qw/region key secret protocol timeout/);
 	defined($options->{$_}) and $self->{$_} = $options->{$_} for (qw/vault token/); # TODO: validate vault later
+	$self->{options} = $options;
 
 	confess unless $self->{protocol} =~ /^https?$/; # we check external data here, even if it's verified in the beginning, especially if it's used to construct URL
 	$self->{service} ||= 'glacier';
@@ -65,6 +67,12 @@ sub add_header
 {
 	my ($self, $name, $value) = @_;
 	push @{$self->{headers}}, { name => $name, value => $value};
+}
+
+sub replace_header
+{
+	my ($self, $name, $value) = @_;
+	@{$self->{headers}} = map { $_->{name} eq $name ? {name => $name, value => $value} : $_ } @{$self->{headers}};
 }
 
 sub create_multipart_upload
@@ -585,6 +593,14 @@ sub perform_lwp
 						}
 					}
 				}
+				if ($resp->code eq '403' and defined $self->{token}) {
+					print "PID $$ not authorized and using token. Will try to update token and retry ($dt seconds spent for request)\n";
+					$self->{last_retry_reason} = 'Token not authorized';
+					throttle($i);
+					$self->_update_role();
+					next;
+				}
+
 				print "PID $$ Bullshit error. Will retry ($dt seconds spent for request)\n";
 				$self->{last_retry_reason} = 'Bullshit error '.$resp->code;
 				throttle($i);
@@ -619,6 +635,20 @@ sub trim
 	$s =~ s/\s*\Z//gsi;
 	$s =~ s/\A\s*//gsi;
 	$s;
+}
+
+sub _update_role
+{
+	my ($self) = @_;
+	my $ua = LWP::UserAgent->new();
+	my $response = $ua->get('http://169.254.169.254/latest/meta-data/iam/security-credentials/');
+	my ($role,) = ($response->decoded_content=~/^\s*([^\r\n]+)\s*$/ms);
+	$response = $ua->get("http://169.254.169.254/latest/meta-data/iam/security-credentials/$role");
+	my $json = JSON::XS->new->utf8->decode($response->decoded_content);
+	$self->{options}{key} = $self->{key} = $json->{AccessKeyId};
+	$self->{options}{secret} = $self->{secret} = $json->{SecretAccessKey};
+	$self->{options}{token} = $self->{token} = $json->{Token};
+	$self->replace_header('x-amz-security-token', $self->{token}) if defined $self->{token};
 }
 
 
