@@ -173,7 +173,8 @@ sub retrieve_archive
 	my $body = <<"END";
 {
   "Type": "archive-retrieval",
-  "ArchiveId": "$archive_id"
+  "ArchiveId": "$archive_id",
+  "Tier": "Bulk"
 }
 END
 
